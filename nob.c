@@ -20,7 +20,8 @@ int main(int argc, char **argv)
                    "-framework", "AudioToolbox",
                    "-framework", "CoreGraphics",
                    "-o", BUILD_FOLDER"handmade",
-                   SRC_FOLDER"macos_main.m");
+                   SRC_FOLDER"macos_main.m",
+                   SRC_FOLDER"handmade.c");
     if (!nob_cmd_run_sync_and_reset(&cmd)) return 1;
 
     return 0;

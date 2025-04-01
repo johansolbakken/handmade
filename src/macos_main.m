@@ -11,6 +11,8 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <ctype.h>
 
+#include "handmade.h"
+
 static void check_error(OSStatus error, const char *operation) {
   if (error == noErr) return;
   char errorString[20];
@@ -79,14 +81,6 @@ static inline float variable_pitch_sine_sample(double t) {
 }
 
 // back buffer
-
-typedef struct game_offscreen_buffer {
-  void* memory;
-  int width;
-  int height;
-  int pitch;
-  int bytes_per_pixel;
-} game_offscreen_buffer;
 
 void resize_back_buffer(game_offscreen_buffer* buffer, int width, int height) {
   if (buffer->memory) {
@@ -319,19 +313,7 @@ void init_audio(void) {
     return;
   }
 
-  for (int y = 0; y < global_back_buffer.height; y++) {
-    for (int x = 0; x < global_back_buffer.width; x++) {
-      double r = (double) x / (double) global_back_buffer.width;
-      double g = (double) y / (double) global_back_buffer.height;
-
-      uint32_t color = 0xff000000;
-      color |= (uint32_t)(255*r) << 16;
-      color |= (uint32_t)(255*g) << 8;
-
-      uint32_t* buffer = global_back_buffer.memory;
-      buffer[x + y * global_back_buffer.width] = color;
-    }
-  }
+  game_update_and_render(&global_back_buffer);
 
   [[self._window contentView] setNeedsDisplay:YES];
 }
