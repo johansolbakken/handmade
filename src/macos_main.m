@@ -6,7 +6,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
+#include <mach/mach_time.h>
+#include <stdint.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <ctype.h>
 
@@ -23,6 +24,39 @@ static void check_error(OSStatus error, const char *operation) {
     sprintf(errorString, "%d", (int)error);
   }
   fprintf(stderr, "[ERROR] %s: %s\n", operation, errorString);
+}
+
+// Global or static storage for the conversion factor:
+static mach_timebase_info_data_t s_timebase_info;
+
+static void init_timebase_info(void)
+{
+  // Only call this once
+  if (s_timebase_info.denom == 0) {
+    mach_timebase_info(&s_timebase_info);
+  }
+}
+
+// Returns a high-resolution timestamp (like QPC)
+// in “mach absolute time” units.
+uint64_t mac_get_wall_clock(void)
+{
+  return mach_absolute_time();
+}
+
+// Converts an elapsed time in "mach absolute time" units
+// to seconds (float or double).
+double mac_get_seconds_elapsed(uint64_t start, uint64_t end)
+{
+  init_timebase_info();
+
+  // “mach_absolute_time()” ticks need scaling by numer/denom for nanoseconds
+  // Then convert nanoseconds to seconds.
+  uint64_t elapsed = (end - start);
+  double elapsedNs = (double)elapsed * (double)s_timebase_info.numer
+    / (double)s_timebase_info.denom;
+  double elapsedSec = elapsedNs * 1.0e-9;
+  return elapsedSec;
 }
 
 // Wave generation functions:
