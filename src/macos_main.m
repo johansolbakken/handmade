@@ -34,17 +34,47 @@ void resize_back_buffer(game_offscreen_buffer* buffer, int width, int height) {
 @end
 
 @implementation GameView
+-(BOOL) acceptsFirstResponder {
+  return YES;
+}
+
+-(void) keyDown:(NSEvent*) event {
+  NSString* keyPressed = event.charactersIgnoringModifiers;
+  NSLog(@"Key Down: %@", keyPressed);
+}
+
+
+- (void)keyUp:(NSEvent *)event {
+  NSString *keyReleased = event.charactersIgnoringModifiers;
+  NSLog(@"Key Up: %@", keyReleased);
+}
+
+- (void)mouseDown:(NSEvent *)event {
+  NSPoint location = [self convertPoint:event.locationInWindow fromView:nil];
+  NSLog(@"Mouse Down at: %@", NSStringFromPoint(location));
+}
+
+- (void)mouseUp:(NSEvent *)event {
+  NSPoint location = [self convertPoint:event.locationInWindow fromView:nil];
+  NSLog(@"Mouse Up at: %@", NSStringFromPoint(location));
+}
+
+- (void)mouseDragged:(NSEvent *)event {
+  NSPoint location = [self convertPoint:event.locationInWindow fromView:nil];
+  NSLog(@"Mouse Dragged at: %@", NSStringFromPoint(location));
+}
+
 -(void)drawRect:(NSRect)dirtyRect {
   [super drawRect:dirtyRect];
 
   CGColorSpaceRef color_space = CGColorSpaceCreateDeviceRGB();
 
   CGContextRef context = CGBitmapContextCreate(
-      global_back_buffer.memory, global_back_buffer.width,
-      global_back_buffer.height,
-      8, // bits per component
-      global_back_buffer.pitch, color_space,
-      kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little);
+    global_back_buffer.memory, global_back_buffer.width,
+    global_back_buffer.height,
+    8, // bits per component
+    global_back_buffer.pitch, color_space,
+    kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little);
 
   CGImageRef image = CGBitmapContextCreateImage(context);
 
@@ -73,7 +103,7 @@ void resize_back_buffer(game_offscreen_buffer* buffer, int width, int height) {
   self._should_close = NO;
 
   NSUInteger style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
-                     NSWindowStyleMaskResizable;
+    NSWindowStyleMaskResizable;
   self._window = [[NSWindow alloc] initWithContentRect:frame
                                              styleMask:style
                                                backing:NSBackingStoreBuffered
@@ -83,16 +113,20 @@ void resize_back_buffer(game_offscreen_buffer* buffer, int width, int height) {
 
   GameView* game_view = [[GameView alloc] initWithFrame:frame];
   [self._window setContentView:game_view];
+  [self._window makeFirstResponder:game_view];
   [self._window makeKeyAndOrderFront:nil];
+
+  [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+  [NSApp activateIgnoringOtherApps:YES];
 
   resize_back_buffer(&global_back_buffer, initial_width, initial_height);
 
   self._game_timer =
-      [NSTimer scheduledTimerWithTimeInterval:1.0 / 60.0
-                                       target:self
-                                     selector:@selector(updateGame)
-                                     userInfo:nil
-                                      repeats:YES];
+    [NSTimer scheduledTimerWithTimeInterval:1.0 / 60.0
+                                     target:self
+                                   selector:@selector(updateGame)
+                                   userInfo:nil
+                                    repeats:YES];
 }
 
 - (void)updateGame {
@@ -121,7 +155,7 @@ void resize_back_buffer(game_offscreen_buffer* buffer, int width, int height) {
 }
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:
-    (NSApplication *)sender {
+  (NSApplication *)sender {
   return YES;
 }
 
