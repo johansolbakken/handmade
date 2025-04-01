@@ -14,14 +14,14 @@ int main(int argc, char **argv)
     nob_cmd_append(&cmd,
                    "cc",
                    "-Wall", "-Wextra", "-Wpedantic", "-std=c99",
+                   "-g",
                    "-framework", "Cocoa",
                    "-framework", "OpenGL",
                    "-framework", "IOKit",
                    "-framework", "AudioToolbox",
                    "-framework", "CoreGraphics",
                    "-o", BUILD_FOLDER"handmade",
-                   SRC_FOLDER"macos_main.m",
-                   SRC_FOLDER"handmade.c");
+                   SRC_FOLDER"macos_main.m");
     if (!nob_cmd_run_sync_and_reset(&cmd)) return 1;
 
     return 0;

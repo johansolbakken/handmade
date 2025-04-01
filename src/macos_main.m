@@ -11,7 +11,7 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <ctype.h>
 
-#include "handmade.h"
+#include "handmade.c"
 
 static void check_error(OSStatus error, const char *operation) {
   if (error == noErr) return;
@@ -61,24 +61,8 @@ double mac_get_seconds_elapsed(uint64_t start, uint64_t end)
   return elapsedSec;
 }
 
-// Wave generation functions:
-static inline float sine_wave_sample(double t, double frequency) {
-  return sin(2.0 * M_PI * frequency * t);
-}
 
-static inline float square_wave_sample(double t, double frequency) {
-  float s = sin(2.0 * M_PI * frequency * t);
-  return (s >= 0.0f) ? 1.0f : -1.0f;
-}
 
-static inline float variable_pitch_sine_sample(double t) {
-  // Base frequency modulated by a slow sine function.
-  double base_frequency = 440.0; // A4 note
-  double modulation = 110.0;     // Frequency variation range
-  double mod_rate = 0.5;         // Modulation frequency (Hz)
-  double frequency = base_frequency + modulation * sin(2.0 * M_PI * mod_rate * t);
-  return sin(2.0 * M_PI * frequency * t);
-}
 
 // back buffer
 
@@ -105,37 +89,51 @@ typedef struct audio_state {
   double dt; // time increment per sample (1/sample_rate)
 } audio_state;
 
-void audio_callback(void *in_user_data,
-                    AudioQueueRef in_audio_queue,
-                    AudioQueueBufferRef in_buffer) {
-  audio_state* state = (audio_state*)in_user_data;
-  int sample_count = in_buffer->mAudioDataByteSize / sizeof(float);
-  float* samples = (float*)in_buffer->mAudioData;
-  double t = state->t;
-  double dt = state->dt;
+typedef struct macos_sound_output {
+  int samples_per_second;
+  int bytes_per_sample;
+  int buffer_count;
+  AudioQueueBufferRef buffers[3];
+  int current_buffer_index;
+  int buffer_size_bytes;
+} macos_sound_output;
 
-  for (int i = 0; i < sample_count; i += 2) {
-    // Using the square wave; change to sine_wave_sample or variable_pitch_sine_sample if desired.
-    float sample_value = variable_pitch_sine_sample(t);
-    samples[i]     = sample_value;
-    samples[i + 1] = sample_value;
-    t += dt;
-  }
-  state->t = t;
-
-  in_buffer->mAudioDataByteSize = sample_count * sizeof(float);
-
-  OSStatus enqueueStatus = AudioQueueEnqueueBuffer(in_audio_queue, in_buffer, 0, NULL);
-  check_error(enqueueStatus, "AudioQueueEnqueueBuffer");
+static void dummy_audio_callback(void *userData,
+                                 AudioQueueRef inAQ,
+                                 AudioQueueBufferRef inBuffer)
+{
+    // Do nothing – all audio data is pushed from updateGame.
+}
 
 
-  // Debug print using stderr (unbuffered)
-  static int callback_count = 0;
-  callback_count++;
-  if (callback_count % 100 == 0) {
-    fprintf(stderr, "audio_callback called %d times\n", callback_count);
-    fflush(stderr);
-  }
+static void audio_callback(void *user_data,
+                           AudioQueueRef inAQ,
+                           AudioQueueBufferRef inBuffer)
+{
+    // Our audio state (could include sample rate, current time t, dt, etc.)
+    audio_state *state = (audio_state *)user_data;
+
+    // Calculate how many frames fit in the provided buffer.
+    // (Each frame = 2 channels * 2 bytes = 4 bytes for 16-bit stereo.)
+    int frame_count = inBuffer->mAudioDataBytesCapacity / 4;
+
+    // Interpret the buffer’s mAudioData as int16_t samples.
+    int16_t *samples = (int16_t *)inBuffer->mAudioData;
+
+    // Build a game_sound_output_buffer structure to pass to our sound generation function.
+    game_sound_output_buffer sound_buffer = {0};
+    sound_buffer.samples_per_second = 48000;  // or use a field from your state if stored there
+    sound_buffer.sample_count       = frame_count;
+    sound_buffer.samples            = samples;
+
+    // Call the game’s sound-generation function.
+    game_output_sound(&sound_buffer);
+
+    // Mark how many bytes we filled (frame_count frames * 4 bytes per frame)
+    inBuffer->mAudioDataByteSize = frame_count * 4;
+
+    // Re-enqueue the buffer for the next callback.
+    AudioQueueEnqueueBuffer(inAQ, inBuffer, 0, NULL);
 }
 
 
@@ -143,64 +141,66 @@ void audio_callback(void *in_user_data,
 
 game_offscreen_buffer global_back_buffer = {0};
 audio_state global_audio_state = {0};
+macos_sound_output sound_output = {0};
 int initial_width = 800;
 int initial_height = 600;
 
-void init_audio(void) {
-  AudioStreamBasicDescription format;
-  memset(&format, 0, sizeof(format));
-  format.mSampleRate       = 48000;
-  format.mFormatID         = kAudioFormatLinearPCM;
-  format.mFormatFlags      = kLinearPCMFormatFlagIsFloat | kLinearPCMFormatFlagIsPacked;
-  format.mBitsPerChannel   = 32;
-  format.mChannelsPerFrame = 2; // Stereo
-  format.mBytesPerFrame    = sizeof(float) * format.mChannelsPerFrame;
-  format.mFramesPerPacket  = 1;
-  format.mBytesPerPacket   = format.mBytesPerFrame;
+void init_audio(void)
+{
+    AudioStreamBasicDescription format;
+    memset(&format, 0, sizeof(format));
 
-  OSStatus status = AudioQueueNewOutput(&format, audio_callback,
-                                        &global_audio_state,
-                                        NULL, NULL, 0,
-                                        &global_audio_state.queue);
-  check_error(status, "AudioQueueNewOutput");
-  if (status != noErr) return;
+    // Configure for 16-bit stereo PCM.
+    format.mSampleRate       = sound_output.samples_per_second; // e.g., 48000
+    format.mFormatID         = kAudioFormatLinearPCM;
+    format.mFormatFlags      = kAudioFormatFlagIsSignedInteger | kLinearPCMFormatFlagIsPacked;
+    format.mBitsPerChannel   = 16;
+    format.mChannelsPerFrame = 2;
+    format.mBytesPerFrame    = 4;  // 2 channels * 2 bytes each
+    format.mFramesPerPacket  = 1;
+    format.mBytesPerPacket   = format.mBytesPerFrame;
 
-  global_audio_state.t  = 0;
-  global_audio_state.dt = 1.0 / format.mSampleRate;
-
-  int buffer_byte_size = (int)(format.mSampleRate * format.mBytesPerFrame * 0.1);
-  for (int i = 0; i < 3; i++) {
-    status = AudioQueueAllocateBuffer(global_audio_state.queue,
-                                      buffer_byte_size,
-                                      &global_audio_state.buffers[i]);
-    check_error(status, "AudioQueueAllocateBuffer");
+    // Create the AudioQueue and pass our audio_callback.
+    OSStatus status = AudioQueueNewOutput(&format,
+                                          audio_callback,        // use our real callback
+                                          &global_audio_state,   // pass audio state as userData
+                                          CFRunLoopGetCurrent(), // use current run loop
+                                          kCFRunLoopCommonModes,
+                                          0,
+                                          &global_audio_state.queue);
+    check_error(status, "AudioQueueNewOutput");
     if (status != noErr) return;
 
-    // Fill the buffer manually (write your wave samples):
-    float *samples = (float *)global_audio_state.buffers[i]->mAudioData;
-    int sample_count = buffer_byte_size / sizeof(float);
-    for (int s = 0; s < sample_count; s += 2) {
-      float value = 0;
-      samples[s]   = value;
-      samples[s+1] = value;
-      global_audio_state.t += global_audio_state.dt;
+    // Set initial time values (if your game_output_sound uses them)
+    global_audio_state.t  = 0;
+    global_audio_state.dt = 1.0 / format.mSampleRate;
+
+    // Allocate some buffers. The AudioQueue will call our callback when it needs data.
+    // For example, allocate 3 buffers each holding ~0.1 second of audio.
+    float seconds_per_buffer = 0.1f;
+    int frames_per_buffer = (int)(sound_output.samples_per_second * seconds_per_buffer);
+    int bytes_per_buffer  = frames_per_buffer * format.mBytesPerFrame;
+
+    // (You can store buffers here if needed, but for pull model, the callback
+    // simply reuses each buffer as it is returned.)
+    for (int i = 0; i < 3; i++)
+    {
+        status = AudioQueueAllocateBuffer(global_audio_state.queue,
+                                          bytes_per_buffer,
+                                          &global_audio_state.buffers[i]);
+        check_error(status, "AudioQueueAllocateBuffer");
+        if (status != noErr) return;
+
+        // Prime the queue by calling our callback manually for each buffer.
+        audio_callback(&global_audio_state, global_audio_state.queue, global_audio_state.buffers[i]);
     }
 
-    global_audio_state.buffers[i]->mAudioDataByteSize = (UInt32)(sample_count * sizeof(float));
-
-    status = AudioQueueEnqueueBuffer(global_audio_state.queue,
-                                     global_audio_state.buffers[i],
-                                     0, NULL);
-    check_error(status, "AudioQueueEnqueueBuffer");
-  }
-
-  status = AudioQueueStart(global_audio_state.queue, NULL);
-  check_error(status, "AudioQueueStart");
-  if (status != noErr) return;
-
-  fprintf(stderr, "[INFO] Audio initialized successfully!\n");
-  fflush(stderr);
+    status = AudioQueueStart(global_audio_state.queue, NULL);
+    check_error(status, "AudioQueueStart");
 }
+
+
+
 
 
 // GameView
@@ -295,6 +295,9 @@ void init_audio(void) {
 
   resize_back_buffer(&global_back_buffer, initial_width, initial_height);
 
+  sound_output.samples_per_second = 48000;
+  sound_output.bytes_per_sample = sizeof(int16) * 2;
+
   init_audio();
 
   self._game_timer =
@@ -313,10 +316,23 @@ void init_audio(void) {
     return;
   }
 
-  game_update_and_render(&global_back_buffer);
+  // Set up the back buffer for rendering.
+  game_offscreen_buffer buffer = {0};
+  buffer.memory = global_back_buffer.memory;
+  buffer.width = global_back_buffer.width;
+  buffer.height = global_back_buffer.height;
+  buffer.pitch = global_back_buffer.pitch;
+  buffer.bytes_per_pixel = global_back_buffer.bytes_per_pixel;
 
+  // Update game logic and render graphics.
+  // (Now game_update_and_render should only update the back buffer.)
+  game_update_and_render(&buffer);
+
+  // Request a redraw.
   [[self._window contentView] setNeedsDisplay:YES];
 }
+
+
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:
   (NSApplication *)sender {

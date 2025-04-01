@@ -28,4 +28,10 @@ typedef struct game_offscreen_buffer {
   int bytes_per_pixel;
 } game_offscreen_buffer;
 
+typedef struct game_sound_output_buffer {
+  int16 *samples;
+  int sample_count;
+  int samples_per_second;
+} game_sound_output_buffer;
+
 internal void game_update_and_render(game_offscreen_buffer *buffer);
